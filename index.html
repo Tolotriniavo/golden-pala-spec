@@ -1428,7 +1428,7 @@
                         end
 
                         subgraph "2b. Le Moteur de Vote (Haute Sécurité)"
-                            CF_API["<b>Proxy API Cloudflare</b><br/>api.thegoldenpala.com<br/>Managed Challenge (ADR-006)"]:::cdn
+                            CF_API["<b>Proxy API Cloudflare</b><br/>api.thegoldenpala.com<br/>WAF + Rate Limiting (ADR-006)"]:::cdn
                             S_EF["<b>Edge Functions</b><br/>API Supabase — Pipeline de validation"]:::backend
                             CF_BOT["<b>Turnstile</b><br/>Service Anti-Bot Cloudflare"]:::cdn
                             AWS_SES["<b>Resend puis AWS SES</b><br/>Envoi du code OTP"]:::external
@@ -1498,7 +1498,7 @@
                 <div class="callout-title">⚙️ 3 prérequis de configuration Cloudflare (sans eux, le Bouclier ne fonctionne pas) :</div>
                 <strong>1. Origine du fichier :</strong> le CDN Cloudflare est un cache, pas un stockage — on ne peut pas y "pousser" un fichier. Le CRON dépose <code>rankings.json</code> sur <strong>Cloudflare R2</strong> (gratuit à ce volume, egress $0) exposé via le domaine custom <code>data.thegoldenpala.com</code>.<br/>
                 <strong>2. Cache Rule JSON :</strong> Cloudflare ne met <em>pas</em> les fichiers <code>.json</code> en cache par défaut. Une Cache Rule explicite est requise : <em>Cache Everything</em> sur <code>/rankings*.json</code> avec Edge TTL de 5 minutes (aligné sur le CRON).<br/>
-                <strong>3. Cache HTML WordPress :</strong> pour tenir 1M de visiteurs sur l'hébergement OVH Performance, les pages HTML de WordPress sont aussi cachées (Cache Rule <em>Cache Everything</em> sur les pages publiques, purge via plugin Cloudflare à chaque mise à jour de contenu).
+                <strong>3. Cache HTML WordPress :</strong> pour tenir 1M de visiteurs sur l'hébergement OVH Performance, les pages HTML de WordPress sont aussi cachées (Cache Rule <em>Cache Everything</em> sur les pages publiques, purge via plugin Cloudflare à chaque mise à jour de contenu). La règle est <strong>couplée à des règles Bypass</strong> sur <code>/wp-admin*</code>, <code>/wp-login.php</code> et toute requête portant un cookie <code>wordpress_logged_in_*</code> (disponible sur le plan Free) — sans quoi la session admin casse, ou pire, une page authentifiée serait mise en cache public.
             </div>
         </section>
 
@@ -1561,8 +1561,8 @@
                                     <td><span class="badge badge-yellow">Moyen</span> Lambda propriétaire</td>
                                 </tr>
                                 <tr>
-                                    <td><strong>Coût total sur 2 ans</strong></td>
-                                    <td><strong>~$1 580</strong></td>
+                                    <td><strong>TCO sur 2 ans</strong><br><span style="color:var(--text-tertiary);font-size:12px">infra + temps développeur (setup & maintenance)</span></td>
+                                    <td><strong>~$1 580</strong><br><span style="color:var(--text-tertiary);font-size:12px">dont ~$640 d'infra</span></td>
                                     <td>Variable</td>
                                     <td><strong>~$7 300–8 340</strong></td>
                                 </tr>
@@ -1599,13 +1599,13 @@
                                 </tr>
                             </thead>
                             <tbody>
-                                <tr><td>10 000 emails</td><td>$0 (free tier)</td><td><strong>$1</strong></td></tr>
+                                <tr><td>10 000 emails</td><td>$20/mois (plan Pro — le free tier s'arrête à 3 000/mois)</td><td><strong>$1</strong></td></tr>
                                 <tr><td>100 000 emails</td><td>$20–35/mois</td><td><strong>$10–16</strong></td></tr>
                                 <tr><td>1 000 000 emails</td><td>jusqu'à ~$1 150/mois (plan Scale)</td><td><strong>$100–160</strong></td></tr>
                             </tbody>
                         </table>
                     </div>
-                    <p><strong>Stratégie :</strong> Démarrer avec Resend (setup 15 min). Migrer vers SES quand le volume dépasse 50 000 emails. L'Edge Function envoie les emails via une couche d'abstraction SMTP : les deux fournisseurs parlent SMTP, la migration = changer 3 variables d'environnement (hôte, utilisateur, clé) — sans toucher au code métier.</p>
+                    <p><strong>Stratégie :</strong> Démarrer avec Resend (setup 15 min). Migrer vers SES quand le volume dépasse 50 000 emails. L'Edge Function envoie les emails via <strong>API HTTP</strong>, derrière une interface unique <code>sendEmail()</code> avec deux adaptateurs (Resend, SES v2) — tous deux écrits et testés dès le jour 1. Pourquoi pas SMTP ? Dans un runtime serverless, SMTP impose une poignée de main TCP/TLS à chaque invocation (lent, fragile, sans pooling) ; l'appel HTTP (~100–300 ms) est la méthode recommandée par Supabase. La migration = basculer la variable <code>EMAIL_PROVIDER</code> de <code>resend</code> à <code>ses</code> (les identifiants SES sont déjà dans le Vault) — sans toucher au code métier.</p>
                     <div class="callout warning">
                         <div class="callout-title">Prérequis opérationnel AWS SES (à anticiper) :</div>
                         Un compte SES neuf est en <strong>sandbox</strong> : 200 emails/jour, destinataires vérifiés uniquement. Il faut demander <strong>l'accès production</strong> (~24h) puis une <strong>augmentation de quota</strong> (défaut : 50 000 emails/jour à 14/s — insuffisant pour un pic viral). Ces deux demandes sont faites <strong>au moins 2 semaines avant l'ouverture du vote</strong>. SPF, DKIM et DMARC sont configurés sur un sous-domaine dédié au transactionnel (<code>otp.thegoldenpala.com</code>), séparé du sous-domaine marketing (<code>news.thegoldenpala.com</code>).
@@ -1683,7 +1683,7 @@
                         <table>
                             <thead><tr><th>Option</th><th>Coût</th><th>Valeur légale</th><th>Complexité</th></tr></thead>
                             <tbody>
-                                <tr><td><strong>SHA-256 + PV Huissier</strong> <span class="badge badge-green">✅</span></td><td>$0</td><td>Absolue en France</td><td>Minimal</td></tr>
+                                <tr><td><strong>SHA-256 + PV Huissier</strong> <span class="badge badge-green">✅</span></td><td>$0 d'infra + constat ~300–600€ (honoraires du commissaire de justice, côté client)</td><td>Absolue en France</td><td>Minimal</td></tr>
                                 <tr><td>Blockchain</td><td>~$0.30–9</td><td>Commencement de preuve</td><td>Élevée</td></tr>
                                 <tr><td>Horodatage eIDAS</td><td>~€0.10</td><td>Présomption EU</td><td>Moyenne</td></tr>
                             </tbody>
@@ -1706,14 +1706,14 @@
                             <thead><tr><th>Option</th><th>Coût certain</th><th>Pire cas (flood 50M req)</th><th>Bénéfices annexes</th></tr></thead>
                             <tbody>
                                 <tr><td>API directe <code>supabase.co</code></td><td>$0</td><td>~$100 d'invocations (0 email — pipeline intact)</td><td>—</td></tr>
-                                <tr><td><strong>Custom Domain</strong> (activé en novembre) <span class="badge badge-green">✅ Recommandé</span></td><td>$10 (1 mois/an)</td><td>~$0 (flood bloqué avant facturation)</td><td>URL propre, analytics d'attaque (preuve pour le commissaire de justice), escalade pré-branchée</td></tr>
+                                <tr><td><strong>Custom Domain</strong> (activé en novembre) <span class="badge badge-green">✅ Recommandé</span></td><td>$10 (1 mois/an)</td><td>~$0 attaques courantes ; flood distribué sophistiqué borné ~$100 (+ mitigation DDoS L7 automatique)</td><td>URL propre, analytics d'attaque (preuve pour le commissaire de justice), escalade pré-branchée</td></tr>
                             </tbody>
                         </table>
                     </div>
-                    <p>Une fois le trafic sur notre zone, deux règles gratuites du plan Cloudflare Free deviennent opérantes sur la route OTP : un <strong>Managed Challenge</strong> (tout POST vers <code>/request-otp</code> doit prouver qu'il vient d'un vrai navigateur — un script <code>curl</code>/Python échoue au bord du réseau) et la <strong>règle de rate limiting</strong> anti-rafales (fenêtre 10 s par IP).</p>
+                    <p>Une fois le trafic sur notre zone, deux règles gratuites du plan Cloudflare Free deviennent opérantes sur la route OTP : une <strong>règle WAF (action : Block)</strong> — tout POST vers <code>/request-otp</code> dont l'en-tête <code>Origin</code> n'est pas <code>https://thegoldenpala.com</code> est rejeté au bord du réseau (un script <code>curl</code>/Python naïf échoue ici ; filtre spoofable, donc un fusible, pas une serrure) — et la <strong>règle de rate limiting (action : Block)</strong> anti-rafales (10 req / 10 s / IP). Pourquoi pas un challenge interactif (Managed Challenge) ? Une réponse challenge ne peut pas être résolue dans un appel <code>fetch()</code> — elle casserait silencieusement les votants légitimes (VPN, navigateurs privés). La preuve « vrai navigateur » est déjà portée par Turnstile, dans le formulaire, là où l'interaction est possible.</p>
                     <div class="callout gold">
                         <span class="callout-icon">🔑</span>
-                        <div><strong>Verdict :</strong> recommandé, mais présenté honnêtement comme un choix de confort à $10/an — pas une nécessité de survie. Sans lui, le risque résiduel est borné à ~$100 ; avec lui, il tombe à ~$0 et le dashboard Cloudflare documente toute tentative d'attaque. Pour un événement médiatisé, le rapport bénéfice/coût est évident.</div>
+                        <div><strong>Verdict :</strong> recommandé, mais présenté honnêtement comme un choix de confort à $10/an — pas une nécessité de survie. Sans lui, le risque résiduel est borné à ~$100 ; avec lui, les attaques courantes tombent à ~$0 (le pire cas d'un flood distribué sophistiqué — botnet + en-têtes falsifiés — reste borné à ~$100, avec la mitigation DDoS L7 automatique de Cloudflare en dernier rempart) et le dashboard Cloudflare documente toute tentative d'attaque. Pour un événement médiatisé, le rapport bénéfice/coût est évident.</div>
                     </div>
                 </div>
             </div>
@@ -1828,7 +1828,7 @@
                         LEGENDES ||--o{ VOTES_VIP : emet
                         VOTES_VIP ||--o{ TRACABILITE_VOTES : trace
                         VOTES_PUBLIC ||--o{ TRACABILITE_VOTES : trace
-                        CODES_OTP }o--|| VOTES_PUBLIC : valide
+                        CODES_OTP ||--o{ VOTES_PUBLIC : valide
                         ADMINISTRATEURS ||--o{ LOGS_AUDIT_ADMIN : effectue
 
                         JOUEURS {
@@ -1989,11 +1989,20 @@ CREATE INDEX idx_public_votes_category ON public_votes(award_category) WHERE is_
                     <span class="chevron">▼</span>
                 </button>
                 <div class="collapsible-content">
-                    <p>Cette table est <strong>strictement immuable</strong> — même les administrateurs ne peuvent pas modifier ou supprimer des entrées. C'est la preuve légale pour le commissaire de justice.</p>
+                    <p>Cette table est <strong>append-only par construction</strong> : aucun rôle applicatif (admin inclus) ne peut modifier ou supprimer une entrée — droits révoqués <em>et</em> trigger de blocage. Honnêteté technique : comme dans toute base de données, un superutilisateur du projet pourrait théoriquement contourner ces verrous. C'est pourquoi la garantie légale n'est pas technique mais <strong>cryptographique</strong> : le hash SHA-256 de clôture (ADR-005) remis au commissaire de justice rend toute altération a posteriori détectable.</p>
                     <pre><code>-- Sécuriser l'immuabilité
 ALTER TABLE admin_audit_logs ENABLE ROW LEVEL SECURITY;
 REVOKE UPDATE, DELETE ON admin_audit_logs FROM PUBLIC;
-REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
+REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;
+
+-- Verrou supplémentaire : bloque aussi service_role et les erreurs d'admin
+CREATE FUNCTION forbid_audit_mutation() RETURNS trigger AS $$
+BEGIN RAISE EXCEPTION 'admin_audit_logs is append-only'; END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER audit_append_only
+BEFORE UPDATE OR DELETE ON admin_audit_logs
+FOR EACH ROW EXECUTE FUNCTION forbid_audit_mutation();</code></pre>
                     <h4>Actions Tracées</h4>
                     <div class="table-wrapper" style="font-size:13px">
                         <table>
@@ -2110,16 +2119,16 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     2. Resend → bascule vers AWS SES (Emails Transactionnels)
                 </h3>
                 <p>
-                    <strong>Objectif :</strong> Garantir la livraison instantanée (&lt; 2 secondes) des codes OTP à 6 chiffres pour le grand public, et des Magic Links pour l'authentification des journalistes et légendes.
+                    <strong>Objectif :</strong> Garantir l'envoi immédiat (&lt; 2 secondes côté serveur ; réception typique &lt; 30 s, dépendante de la messagerie du destinataire — greylisting Gmail/Outlook) des codes OTP à 6 chiffres pour le grand public, et des Magic Links pour l'authentification des journalistes et légendes.
                 </p>
                 <div class="callout warning">
                     <div class="callout-title">Vérifiabilité des Coûts (Important) :</div> 
-                    Le tier gratuit de Resend bloque à 100 emails/jour (3000/mois). Pour encaisser 1 million de votes en 15 jours, l'architecture est conçue pour utiliser le protocole SMTP natif connecté à AWS SES (Simple Email Service). Le coût officiel d'AWS SES est d'exactement <strong>0.10$ pour 1000 emails</strong>. Le budget pour 1 000 000 d'OTP est donc de 100$ maximum.
+                    Le tier gratuit de Resend bloque à 100 emails/jour (3000/mois). Pour encaisser 1 million de votes en 15 jours, l'architecture bascule sur l'<strong>API HTTP d'AWS SES</strong> (SES v2 <code>SendEmail</code>). Le coût officiel d'AWS SES est d'exactement <strong>0.10$ pour 1000 emails</strong> — soit $100 pour 1 million d'emails envoyés. Le budget est provisionné sur une base de <strong>~2 emails par votant</strong> (redemandes de code, renvois, magic links) : ~$200 pour 1M de votants, ~$1 000 pour 5M. Cette hypothèse est appliquée uniformément dans toutes les projections de ce document.
                 </div>
                 <h4>Flux Technique & API</h4>
                 <ul style="color:var(--text-secondary); margin-left: 20px; line-height: 1.6;">
-                    <li>L'envoi est déclenché par l'<strong>Edge Function</strong> (Supabase Auth n'est pas utilisé pour les votants — voir Sécurité) via le protocole <strong>SMTP</strong>, à travers une couche d'abstraction unique.</li>
-                    <li>Resend et AWS SES exposent tous deux une interface SMTP : la bascule en production = changer 3 variables d'environnement (<code>SMTP_HOST</code>, <code>SMTP_USER</code>, <code>SMTP_PASS</code>), sans récrire une seule ligne de code métier.</li>
+                    <li>L'envoi est déclenché par l'<strong>Edge Function</strong> (Supabase Auth n'est pas utilisé pour les votants — voir Sécurité) via <strong>API HTTP</strong>, à travers une interface d'envoi unique (<code>sendEmail()</code>). Le SMTP est volontairement écarté : en serverless, il coûterait une poignée de main TCP/TLS par invocation — l'appel HTTP est plus rapide et plus fiable.</li>
+                    <li>Resend (<code>POST https://api.resend.com/emails</code>, clé API) et SES v2 (<code>SendEmail</code>, signature SigV4) sont deux adaptateurs derrière la même interface : la bascule en production = <code>EMAIL_PROVIDER=ses</code>, sans récrire une seule ligne de code métier.</li>
                     <li>Prérequis SES anticipés : accès production + augmentation de quota demandés 2 semaines avant l'ouverture (voir ADR-002).</li>
                 </ul>
             </div>
@@ -2225,7 +2234,7 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                             <td><strong>Public</strong> (20%)</td>
                             <td>OTP 6 chiffres par email</td>
                             <td>2 heures</td>
-                            <td>Turnstile + pipeline de validation applicatif + Managed Challenge Edge (via Custom Domain, ADR-006)</td>
+                            <td>Turnstile + pipeline de validation applicatif + règles WAF & rate limiting Edge (via Custom Domain, ADR-006)</td>
                         </tr>
                         <tr>
                             <td><strong>Admin</strong></td>
@@ -2245,7 +2254,7 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                 l'IP n'est jamais utilisée pour identifier un votant (tolérance totale aux wifi partagés, 4G/CGNAT, clubs de padel).
             </p>
             <ol style="color:var(--text-secondary); line-height: 1.6; margin-bottom: 2rem;">
-                <li><strong>Couche 1 — Cloudflare Edge (devant le compteur d'invocations) :</strong> avec le Custom Domain <code>api.thegoldenpala.com</code> (voir ADR-006, recommandé), un <strong>Managed Challenge</strong> sur la route OTP élimine les scripts non-navigateurs au bord du réseau, et une règle de rate limiting coupe les rafales (fenêtre 10 s par IP). Requête bloquée ici = $0 facturé. Sans Custom Domain, cette couche n'existe pas et le pire cas d'un flood est borné à ~$100 d'invocations.</li>
+                <li><strong>Couche 1 — Cloudflare Edge (devant le compteur d'invocations) :</strong> avec le Custom Domain <code>api.thegoldenpala.com</code> (voir ADR-006, recommandé), une <strong>règle WAF (Block)</strong> rejette au bord du réseau tout POST vers la route OTP dont l'<code>Origin</code> n'est pas le site officiel (élimine les scripts naïfs), et une <strong>règle de rate limiting (Block)</strong> coupe les rafales (10 req / 10 s / IP). Pas de challenge interactif sur un endpoint API : une réponse challenge ne peut pas être résolue dans un <code>fetch()</code> — la preuve « vrai navigateur » est le rôle de Turnstile (couche 2). Requête bloquée ici = $0 facturé. Sans Custom Domain, cette couche n'existe pas et le pire cas d'un flood est borné à ~$100 d'invocations.</li>
                 <li><strong>Couche 2 — Cloudflare Turnstile (Comportemental) :</strong> challenge invisible vérifié côté serveur dans l'Edge Function, bloquant 99% des bots restants sans pénaliser les IP partagées. Fonctionne quel que soit le routage (la vérification <code>siteverify</code> est serveur-à-serveur).</li>
                 <li><strong>Couche 3 — Pipeline applicatif (devant le compteur d'emails) :</strong> une requête qui atteint la fonction traverse, dans l'ordre : validation syntaxique de l'email → blocklist des domaines jetables → vérification MX du domaine → quota IP (fusible) → quota email. <strong>Aucun email n'est envoyé tant que tout n'est pas vert.</strong> Détail ci-dessous.</li>
                 <li><strong>Bypasse de Supabase Auth (Stratégie de Coût) :</strong> <em>Décision majeure.</em> Nous n'utiliserons pas le module natif "Supabase Auth" pour les votants. Au-delà de 100 000 MAU inclus, Supabase facture 0.00325$ par votant : pour 5 millions de votants, cela coûterait ~15 925$. En gérant nous-mêmes les OTP de manière "stateless" dans une table dédiée via Edge Functions, le coût serveur reste bloqué à 25$/mois !</li>
@@ -2276,7 +2285,7 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     <div class="flow-step-marker"><div class="flow-step-dot">3</div><div class="flow-step-line"></div></div>
                     <div class="flow-step-content">
                         <div class="flow-step-title">Vérification MX du domaine</div>
-                        <div class="flow-step-desc"><code>Deno.resolveDns(domaine, "MX")</code> (~20 ms) : le domaine peut-il recevoir des emails ? Élimine tous les domaines inventés sans coûter un envoi.</div>
+                        <div class="flow-step-desc"><code>Deno.resolveDns(domaine, "MX")</code> (~20 ms) : le domaine peut-il recevoir des emails ? Élimine tous les domaines inventés sans coûter un envoi. Fallback prévu si l'API DNS n'est pas disponible dans le runtime Supabase : requête DoH vers <code>cloudflare-dns.com/dns-query?type=MX</code> (simple <code>fetch()</code>, même latence, même résultat).</div>
                     </div>
                 </div>
                 <div class="flow-step">
@@ -2488,8 +2497,8 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     <div class="flow-step-content">
                         <div class="flow-step-title">🟡 Phase Confirmé — 100k à 500k votants</div>
                         <div class="flow-step-desc">
-                            Migration <strong>Resend → AWS SES</strong> (2-4h de setup) · <strong>Brevo Starter</strong> (~19€ en novembre, couvre ~20 000 envois — au-delà, basculer sur Sendy)<br>
-                            <span class="badge badge-gold" style="margin-top:8px">~$331/an</span>
+                            Migration <strong>Resend → AWS SES</strong> (2-4h de setup) · <strong>Brevo Starter</strong> (~18€ en novembre, couvre ~20 000 envois — au-delà, basculer sur Sendy)<br>
+                            <span class="badge badge-gold" style="margin-top:8px">~$341/an</span>
                         </div>
                     </div>
                 </div>
@@ -2501,8 +2510,8 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     <div class="flow-step-content">
                         <div class="flow-step-title">🔴 Phase Virale — 500k à 5M votants</div>
                         <div class="flow-step-desc">
-                            Migration <strong>Brevo → Sendy + SES</strong> (2-4h) · <strong>Cloudflare Pro</strong> optionnel ($25/mois)<br>
-                            <span class="badge badge-gold" style="margin-top:8px">~$615–$1,246/an</span>
+                            Migration <strong>Brevo → Sendy + SES</strong> (2-4h) · <strong>Cloudflare Pro</strong> optionnel ($25/mois) · <strong>Compute Small</strong> pré-provisionné pour novembre (+$15, absorbe les pics viraux d'écriture)<br>
+                            <span class="badge badge-gold" style="margin-top:8px">~$601–$1,501/an</span>
                         </div>
                     </div>
                 </div>
@@ -2514,9 +2523,9 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     <thead><tr><th>Métrique</th><th>Capacité</th><th>Utilisation à 5M</th><th>Statut</th></tr></thead>
                     <tbody>
                         <tr><td><strong>Stockage BDD</strong></td><td>8 Go (Pro)</td><td>~1.5 Go (19%)</td><td><span class="badge badge-green">✅ OK</span></td></tr>
-                        <tr><td><strong>Écritures/sec (pic)</strong></td><td>500–1500/s</td><td>~200/s</td><td><span class="badge badge-green">✅ OK</span></td></tr>
+                        <tr><td><strong>Écritures/sec (pic)</strong></td><td>500–1500/s</td><td>~200/s (moyenne — un pic viral type passage TV peut faire ×10 : Compute Small pré-provisionné en novembre, +$15)</td><td><span class="badge badge-green">✅ OK</span></td></tr>
                         <tr><td><strong>Egress</strong></td><td>250 Go/mois</td><td>~3 Go (1.2%)</td><td><span class="badge badge-green">✅ OK</span></td></tr>
-                        <tr><td><strong>Edge Functions</strong></td><td>2M incluses</td><td>~15M → +$26</td><td><span class="badge badge-yellow">⚠️ $26</span></td></tr>
+                        <tr><td><strong>Edge Functions</strong></td><td>2M incluses</td><td>~30M (préflights CORS inclus) → +$56</td><td><span class="badge badge-yellow">⚠️ $56</span></td></tr>
                         <tr><td><strong>Supabase Auth MAU</strong></td><td>100k</td><td>0 (OTP custom)</td><td><span class="badge badge-green">✅ Économie $15,925</span></td></tr>
                         <tr><td><strong>Turnstile siteverify</strong></td><td>1M/mois (gratuit)</td><td>~5–6M</td><td><span class="badge badge-yellow">⚠️ Voir mitigation</span></td></tr>
                     </tbody>
@@ -2524,11 +2533,11 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
             </div>
             <div class="callout warning">
                 <span class="callout-icon">🤖</span>
-                <div><strong>Le seul quota gratuit dépassé à 5M : Turnstile.</strong> Le palier supérieur (Enterprise Bot Management) démarre à <strong>~$2 000/mois</strong> en contrat négocié, sans palier intermédiaire — hors de proportion avec notre budget, ce n'est donc <strong>pas</strong> notre plan. La stratégie documentée : (1) l'architecture ne consomme qu'<strong>1 vérification par votant</strong> (à la demande d'OTP uniquement — le vote est couvert par le JWT), le quota gratuit tient donc jusqu'à ~1M de votants ; (2) au-delà, le flag <code>turnstile_actif</code> dans <code>parametres_systeme</code> bascule le formulaire sur <strong>ALTCHA</strong> — anti-bot open-source (MIT) à preuve de travail, auto-hébergé dans nos Edge Functions existantes : <strong>illimité, $0, RGPD par design</strong> (ni cookies ni fingerprinting). Son mécanisme (frein économique par calcul) est légèrement moins fin que la détection comportementale de Turnstile, mais combiné au Managed Challenge Edge (ADR-006) et au pipeline applicatif, la posture de sécurité reste équivalente — et l'unicité du vote (email/OTP) n'est jamais affectée. Coût du dépassement : <strong>$0</strong>. Alternatives écartées : reCAPTCHA (~$5 000 pour 5M, RGPD délicat), hCaptcha gratuit (puzzles visibles — UX dégradée), Friendly Captcha/Prosopo (paliers PME, hors échelle).</div>
+                <div><strong>Le seul quota gratuit dépassé à 5M : Turnstile.</strong> Le palier supérieur (Enterprise Bot Management) démarre à <strong>~$2 000/mois</strong> en contrat négocié, sans palier intermédiaire — hors de proportion avec notre budget, ce n'est donc <strong>pas</strong> notre plan. La stratégie documentée : (1) l'architecture ne consomme qu'<strong>1 vérification par votant</strong> (à la demande d'OTP uniquement — le vote est couvert par le JWT), le quota gratuit tient donc jusqu'à ~1M de votants ; (2) au-delà, le flag <code>turnstile_actif</code> dans <code>parametres_systeme</code> bascule le formulaire sur <strong>ALTCHA</strong> — anti-bot open-source (MIT) à preuve de travail, auto-hébergé dans nos Edge Functions existantes : <strong>illimité, $0, RGPD par design</strong> (ni cookies ni fingerprinting). Son mécanisme (frein économique par calcul) est légèrement moins fin que la détection comportementale de Turnstile, mais combiné aux règles Edge WAF + rate limiting (ADR-006) et au pipeline applicatif, la posture de sécurité reste équivalente — et l'unicité du vote (email/OTP) n'est jamais affectée. Coût du dépassement : <strong>$0</strong>. Alternatives écartées : reCAPTCHA (~$5 000 pour 5M, RGPD délicat), hCaptcha gratuit (puzzles visibles — UX dégradée), Friendly Captcha/Prosopo (paliers PME, hors échelle).</div>
             </div>
             <div class="callout success">
                 <span class="callout-icon">🎯</span>
-                <div><strong>Facture du mois de vote pour 5 millions de votants :</strong> ~$551 ($25 Supabase + $26 Edge Functions + ~$500 AWS SES), soit ~$1 246 sur l'année complète (détail en section Coûts). L'architecture est mathématiquement blindée.</div>
+                <div><strong>Facture du mois de vote pour 5 millions de votants :</strong> ~$1 081 ($25 Supabase + $56 Edge Functions + ~$1 000 AWS SES, sur la base de ~2 emails par votant), soit ~$1 501 sur l'année complète (détail en section Coûts). L'architecture est mathématiquement blindée.</div>
             </div>
         </section>
 
@@ -2547,30 +2556,30 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                 <div class="cost-bar-row">
                     <div class="cost-bar-label">10k votants</div>
                     <div class="cost-bar-track">
-                        <div class="cost-bar-fill" style="width: 25%" id="bar1">$320</div>
+                        <div class="cost-bar-fill" style="width: 22%" id="bar1">$320</div>
                     </div>
                     <div class="cost-bar-amount">$320/an</div>
                 </div>
                 <div class="cost-bar-row">
                     <div class="cost-bar-label">100k votants</div>
                     <div class="cost-bar-track">
-                        <div class="cost-bar-fill" style="width: 27%" id="bar2">$331</div>
+                        <div class="cost-bar-fill" style="width: 23%" id="bar2">$341</div>
                     </div>
-                    <div class="cost-bar-amount">$331/an</div>
+                    <div class="cost-bar-amount">$341/an</div>
                 </div>
                 <div class="cost-bar-row">
                     <div class="cost-bar-label">1M votants</div>
                     <div class="cost-bar-track">
-                        <div class="cost-bar-fill" style="width: 49%" id="bar3">$615</div>
+                        <div class="cost-bar-fill" style="width: 40%" id="bar3">$601</div>
                     </div>
-                    <div class="cost-bar-amount">$615/an</div>
+                    <div class="cost-bar-amount">$601/an</div>
                 </div>
                 <div class="cost-bar-row">
                     <div class="cost-bar-label">5M votants</div>
                     <div class="cost-bar-track">
-                        <div class="cost-bar-fill" style="width: 100%" id="bar4">$1,246</div>
+                        <div class="cost-bar-fill" style="width: 100%" id="bar4">$1,501</div>
                     </div>
-                    <div class="cost-bar-amount">$1,246/an</div>
+                    <div class="cost-bar-amount">$1,501/an</div>
                 </div>
             </div>
 
@@ -2580,18 +2589,18 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     <thead><tr><th>Poste</th><th>10k votants</th><th>100k votants</th><th>1M votants</th><th>5M votants</th></tr></thead>
                     <tbody>
                         <tr><td><strong>Supabase Pro</strong> (12 mois)</td><td>$300</td><td>$300</td><td>$300</td><td>$300</td></tr>
-                        <tr><td><strong>Emails OTP</strong></td><td>$20 (Resend, nov.)</td><td>~$10 (SES)</td><td>~$220 (SES)</td><td>~$500 (SES)</td></tr>
+                        <tr><td><strong>Emails OTP</strong> (~2 emails/votant)</td><td>$20 (Resend, nov.)</td><td>~$20 (SES)</td><td>~$200 (SES)</td><td>~$1,000 (SES)</td></tr>
                         <tr><td><strong>Newsletter</strong></td><td>$0 (Brevo Free)</td><td>~$21 (Brevo Starter, nov.)</td><td>$69 (licence Sendy, unique)</td><td>$69 (licence Sendy, unique)</td></tr>
-                        <tr><td><strong>Edge Functions</strong> (dépassement)</td><td>$0</td><td>$0</td><td>~$2</td><td>~$26</td></tr>
-                        <tr><td><strong>Custom Domain Supabase</strong> (novembre — recommandé, ADR-006)</td><td>+$10</td><td>+$10</td><td>+$10</td><td>+$10</td></tr>
-                        <tr><td><strong>Cloudflare Pro</strong> (optionnel)</td><td>—</td><td>—</td><td>—</td><td>$300</td></tr>
-                        <tr><td><strong>Provision divers</strong></td><td>—</td><td>—</td><td>~$24</td><td>~$51</td></tr>
-                        <tr><td><strong>Total</strong></td><td><strong>$320/an</strong></td><td><strong>$331/an</strong></td><td><strong>$615/an</strong></td><td><strong>$1,246/an</strong></td></tr>
+                        <tr><td><strong>Edge Functions</strong> (dépassement, préflights CORS inclus)</td><td>$0</td><td>$0</td><td>~$8</td><td>~$56</td></tr>
+                        <tr><td><strong>Custom Domain Supabase</strong> (novembre — recommandé, ADR-006 · <em>optionnel, non compté dans les totaux</em>)</td><td>(+$10)</td><td>(+$10)</td><td>(+$10)</td><td>(+$10)</td></tr>
+                        <tr><td><strong>Cloudflare Pro</strong> (optionnel, mois de vote uniquement)</td><td>—</td><td>—</td><td>—</td><td>$25 (nov.)</td></tr>
+                        <tr><td><strong>Provision divers</strong> (incl. envois newsletter via Sendy/SES à $0.10/1 000)</td><td>—</td><td>—</td><td>~$24</td><td>~$51</td></tr>
+                        <tr><td><strong>Total</strong></td><td><strong>$320/an</strong></td><td><strong>$341/an</strong></td><td><strong>$601/an</strong></td><td><strong>$1,501/an</strong></td></tr>
                     </tbody>
                 </table>
             </div>
             <p style="font-size:13px; color:var(--text-tertiary);">
-                Hors budget : hébergement OVH Performance et nom de domaine (déjà acquis par le client). Sendy tourne sur l'hébergement OVH existant — pas d'instance EC2 à louer. La licence Sendy ($69) est un achat unique, comptée l'année de la bascule. Le Custom Domain Supabase (+$10, activé uniquement pour le mois de vote) est recommandé mais optionnel — il n'est pas inclus dans les totaux ci-dessus.
+                Tous les prix s'entendent <strong>hors taxes</strong>. Hors budget : hébergement OVH Performance et nom de domaine (déjà acquis par le client). Sendy tourne sur l'hébergement OVH existant — pas d'instance EC2 à louer. La licence Sendy ($69) est un achat unique, comptée l'année de la bascule. Le Custom Domain Supabase (+$10, activé uniquement pour le mois de vote) est recommandé mais optionnel — il n'est pas inclus dans les totaux ci-dessus. Les emails OTP sont provisionnés à ~2 emails par votant (redemandes de code, renvois) — hypothèse appliquée uniformément à tous les scénarios. Les <strong>envois newsletter</strong> via Sendy coûtent $0.10/1 000 (SES) : la provision divers couvre ~2 campagnes jusqu'à ~120k inscrits (scénario 1M) / ~250k inscrits (scénario 5M) ; si la liste "Notify Me" dépasse ces volumes, compter <strong>~$100 par campagne par million d'inscrits</strong> — coût linéaire, chiffré avec le client le moment venu.
             </p>
 
             <h3>Grille Tarifaire Détaillée — Service par Service</h3>
@@ -2616,7 +2625,7 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                         </tr>
                         <tr>
                             <td><strong>Custom Domain Supabase</strong><br><span style="color:var(--text-tertiary);font-size:12px">api.thegoldenpala.com (ADR-006)</span></td>
-                            <td><strong>$10/mois</strong><br>(novembre uniquement)</td>
+                            <td><strong>$10/mois</strong><br>(novembre uniquement — tarif constaté, à confirmer dans le dashboard au moment de l'activation)</td>
                             <td>API exposée derrière notre zone Cloudflare</td>
                             <td>Aucune — tarif fixe</td>
                             <td>Add-on activable/désactivable à tout moment → $10/an en pratique</td>
@@ -2625,7 +2634,7 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                             <td><strong>Cloudflare Free</strong><br><span style="color:var(--text-tertiary);font-size:12px">CDN, DNS, WAF, Turnstile</span></td>
                             <td><strong>$0</strong></td>
                             <td>CDN bande passante illimitée · protection DDoS L3/L4 · 5 règles WAF custom · 1 règle rate limiting (fenêtre 10 s) · Turnstile 1M vérifications siteverify/mois (20 widgets) · 10 Cache Rules</td>
-                            <td>Aucune facturation à l'usage (aucune carte bancaire requise). Turnstile au-delà de 1M vérifications/mois : pas de coupure automatique, mais orientation vers Enterprise (~$2 000+/mois, contrat négocié)</td>
+                            <td>Aucune facturation à l'usage sur le plan Free lui-même. ⚠️ Nota : l'activation de <strong>R2</strong> exige d'enregistrer un moyen de paiement, même en restant dans le quota gratuit. Turnstile au-delà de 1M vérifications/mois : pas de coupure automatique, mais orientation vers Enterprise (~$2 000+/mois, contrat négocié)</td>
                             <td>Upgrade Pro ($25/mois) purement optionnel (analytics avancés, WAF managé). Le mode "Under Attack" est inclus dans le Free</td>
                         </tr>
                         <tr>
@@ -2640,14 +2649,14 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                             <td><strong>$0 → $20/mois</strong></td>
                             <td>Free : 3 000 emails/mois (100/jour) · Pro $20 : 50 000 emails/mois</td>
                             <td>Dépassement facturé par tranche de 1 000 emails ; paliers supérieurs jusqu'à $1 150/mois (2.5M)</td>
-                            <td>Bascule vers SES planifiée <strong>avant</strong> 50 000 emails (3 variables SMTP à changer) — on ne monte jamais dans les paliers chers de Resend</td>
+                            <td>Bascule vers SES planifiée <strong>avant</strong> 50 000 emails (basculer <code>EMAIL_PROVIDER</code> — l'adaptateur SES est déjà en place) — on ne monte jamais dans les paliers chers de Resend</td>
                         </tr>
                         <tr>
                             <td><strong>AWS SES</strong><br><span style="color:var(--text-tertiary);font-size:12px">OTP — phase scale</span></td>
                             <td><strong>$0</strong> (pay-as-you-go)</td>
                             <td>Aucun abonnement — $0.10 / 1 000 emails, linéaire</td>
                             <td>IP dédiée $24.95/mois (optionnelle) · Virtual Deliverability Manager $0.07/1 000 (optionnel) · transfert de données $0.12/Go (négligeable pour des OTP texte)</td>
-                            <td>Ni IP dédiée ni VDM ne sont nécessaires à notre volume. Le seul coût qui scale est linéaire et plafonné par le pipeline anti-abus : 1M OTP = $100, 5M = $500 — jamais de mauvaise surprise exponentielle</td>
+                            <td>Ni IP dédiée ni VDM ne sont nécessaires à notre volume. Le seul coût qui scale est linéaire et plafonné par le pipeline anti-abus : $0.10/1 000 emails, soit ~$200 pour 1M de votants et ~$1 000 pour 5M (provision ~2 emails/votant) — jamais de mauvaise surprise exponentielle</td>
                         </tr>
                         <tr>
                             <td><strong>AWS SNS</strong><br><span style="color:var(--text-tertiary);font-size:12px">Notifications bounces</span></td>
@@ -2699,12 +2708,12 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
             <div class="card-grid card-grid-3">
                 <div class="card">
                     <div class="card-title">1. Les emails OTP</div>
-                    <div class="card-body">Le seul coût qui grandit avec le succès — mais <strong>linéairement</strong> ($0.10/1 000, jamais de palier surprise) et uniquement pour des demandes ayant passé tout le pipeline anti-abus. 5M de votants = ~$500, connu d'avance.</div>
+                    <div class="card-body">Le seul coût qui grandit avec le succès — mais <strong>linéairement</strong> ($0.10/1 000, jamais de palier surprise) et uniquement pour des demandes ayant passé tout le pipeline anti-abus. 5M de votants ≈ $1 000 (provision ~2 emails/votant), connu d'avance.</div>
                     <div style="margin-top:12px"><span class="badge badge-yellow">Structurel, prévisible</span></div>
                 </div>
                 <div class="card">
                     <div class="card-title">2. Invocations en cas de flood</div>
-                    <div class="card-body">Une attaque massive sur l'API consomme des invocations à $2/M — pire cas borné à ~$100. Avec le Custom Domain + Managed Challenge (ADR-006), le blocage a lieu <strong>avant</strong> la facturation : ~$0.</div>
+                    <div class="card-body">Une attaque massive sur l'API consomme des invocations à $2/M — pire cas borné à ~$100. Avec le Custom Domain + règles WAF/rate limiting (ADR-006), les attaques courantes sont bloquées <strong>avant</strong> la facturation (~$0) ; un flood distribué sophistiqué reste borné à ~$100, la mitigation DDoS L7 automatique de Cloudflare en dernier rempart.</div>
                     <div style="margin-top:12px"><span class="badge badge-green">Borné, mitigé</span></div>
                 </div>
                 <div class="card">
@@ -2724,7 +2733,7 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                 <table>
                     <thead><tr><th>Architecture</th><th>Coût mensuel</th><th>Remarque</th></tr></thead>
                     <tbody>
-                        <tr><td><strong>Notre stack</strong> (Supabase + Cloudflare) <span class="badge badge-green">✅</span></td><td>$25/mois — pic ~$551 le mois de vote (scénario 5M)</td><td>Choix retenu</td></tr>
+                        <tr><td><strong>Notre stack</strong> (Supabase + Cloudflare) <span class="badge badge-green">✅</span></td><td>$25/mois — pic ~$1 081 le mois de vote (scénario 5M)</td><td>Choix retenu</td></tr>
                         <tr><td>Firebase + Google Cloud CDN</td><td>$50–300/mois</td><td>Vendor lock-in, NoSQL inadapté</td></tr>
                         <tr><td>AWS EC2 + RDS + CloudFront</td><td>$150–500/mois</td><td>Complexité, gestion infra</td></tr>
                         <tr><td>Agence full-service</td><td>$500–2,000/mois</td><td>Coûteux, dépendance totale</td></tr>
@@ -2806,11 +2815,11 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                     <tbody>
                         <tr><td>Attaque DDoS sur le vote</td><td><span class="badge badge-yellow">Moyen</span></td><td><span class="badge badge-red">Élevé</span></td><td>Cloudflare absorbe + Under Attack Mode</td></tr>
                         <tr><td>Supabase incident global</td><td><span class="badge badge-green">Très faible</span></td><td><span class="badge badge-red">Critique</span></td><td>Page de maintenance + communication</td></tr>
-                        <tr><td>Script de gel échoue</td><td><span class="badge badge-green">Très faible</span></td><td><span class="badge badge-red">Critique</span></td><td>Backup 09:00, relance manuelle, runbook</td></tr>
+                        <tr><td>Script de gel échoue</td><td><span class="badge badge-green">Très faible</span></td><td><span class="badge badge-red">Critique</span></td><td>Script de secours 15 min après le gel (10:15), alerte + relance manuelle documentée (runbook)</td></tr>
                         <tr><td>Emails OTP en spam</td><td><span class="badge badge-green">Faible</span></td><td><span class="badge badge-red">Élevé</span></td><td>SPF/DKIM/DMARC configurés, sous-domaine transactionnel dédié</td></tr>
                         <tr><td>Quota SES insuffisant au pic</td><td><span class="badge badge-yellow">Moyen</span></td><td><span class="badge badge-red">Élevé</span></td><td>Accès production + augmentation de quota demandés 2 semaines avant l'ouverture</td></tr>
                         <tr><td>Taux de bounce élevé → suspension SES</td><td><span class="badge badge-yellow">Moyen</span></td><td><span class="badge badge-red">Critique</span></td><td>Pipeline de validation (blocklist + MX) avant tout envoi, liste de suppression alimentée par les notifications SNS</td></tr>
-                        <tr><td>Flood de requêtes sur la route OTP</td><td><span class="badge badge-yellow">Moyen</span></td><td><span class="badge badge-green">Faible (borné ~$100)</span></td><td>Custom Domain + Managed Challenge (ADR-006) : blocage avant facturation → ~$0</td></tr>
+                        <tr><td>Flood de requêtes sur la route OTP</td><td><span class="badge badge-yellow">Moyen</span></td><td><span class="badge badge-green">Faible (borné ~$100)</span></td><td>Custom Domain + règles WAF/rate limiting (ADR-006) : attaques courantes bloquées avant facturation (~$0) ; pire cas distribué borné ~$100 + mitigation DDoS L7 automatique</td></tr>
                         <tr><td>Erreur moteur d'agrégation</td><td><span class="badge badge-green">Faible</span></td><td><span class="badge badge-red">Critique</span></td><td>Tests unitaires + vérification SQL manuelle</td></tr>
                     </tbody>
                 </table>
@@ -2833,13 +2842,14 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                 <table>
                     <thead><tr><th>#</th><th>Action</th><th>Où</th><th>Délai</th></tr></thead>
                     <tbody>
+                        <tr><td>0</td><td><strong>Migrer la zone DNS vers Cloudflare</strong> : changement des nameservers chez OVH + import de <em>tous</em> les enregistrements existants (MX inclus). Prérequis de toute l'architecture (proxy, WAF, Cache Rules, R2, Turnstile) — à faire en tout premier, bien avant J-14. Nota : l'activation de R2 demande d'enregistrer un moyen de paiement (usage $0 à notre volume)</td><td>OVH (registrar) + Cloudflare DNS</td><td>1h + propagation 24–48h</td></tr>
                         <tr><td>1</td><td>Demander l'accès production AWS SES (sortie de sandbox)</td><td>Console AWS SES</td><td>~24h</td></tr>
                         <tr><td>2</td><td>Demander l'augmentation de quota SES (défaut : 50k/jour, 14/s)</td><td>AWS Support</td><td>2–5 jours</td></tr>
                         <tr><td>3</td><td>Configurer SPF/DKIM/DMARC sur <code>otp.thegoldenpala.com</code> (transactionnel) et <code>news.thegoldenpala.com</code> (marketing)</td><td>DNS Cloudflare</td><td>1h + propagation</td></tr>
                         <tr><td>4</td><td>Créer le bucket R2 + domaine custom <code>data.thegoldenpala.com</code></td><td>Cloudflare R2</td><td>30 min</td></tr>
                         <tr><td>5</td><td>Cache Rule <em>Cache Everything</em> sur <code>/rankings*.json</code>, Edge TTL 5 min</td><td>Cloudflare Cache Rules</td><td>15 min</td></tr>
-                        <tr><td>6</td><td>Cache Rule HTML sur les pages publiques WordPress + plugin de purge</td><td>Cloudflare + WordPress</td><td>1h</td></tr>
-                        <tr><td>7</td><td>Activer le Custom Domain <code>api.thegoldenpala.com</code> (add-on $10/mois — recommandé, ADR-006), puis : règle Managed Challenge sur <code>POST /request-otp</code> + règle de rate limiting anti-rafales (10 req / 10 s / IP)</td><td>Supabase + Cloudflare WAF</td><td>1h</td></tr>
+                        <tr><td>6</td><td>Cache Rule HTML sur les pages publiques WordPress + règles Bypass (<code>/wp-admin*</code>, <code>/wp-login.php</code>, cookie <code>wordpress_logged_in_*</code>) + plugin de purge</td><td>Cloudflare + WordPress</td><td>1h</td></tr>
+                        <tr><td>7</td><td>Activer le Custom Domain <code>api.thegoldenpala.com</code> (add-on $10/mois — recommandé, ADR-006), puis : règle WAF (Block) sur <code>POST /request-otp</code> si <code>Origin</code> ≠ <code>thegoldenpala.com</code> + règle de rate limiting (Block, 10 req / 10 s / IP) — pas de challenge interactif sur un endpoint API (irrésoluble dans un <code>fetch()</code>). Important : la règle WAF ne matche que la méthode <code>POST</code> — les préflights CORS <code>OPTIONS</code> doivent passer, sinon le vote casse pour tout le monde</td><td>Supabase + Cloudflare WAF</td><td>1h</td></tr>
                         <tr><td>8</td><td>Activer les alertes de facturation (Supabase + Cloudflare + AWS)</td><td>Dashboards</td><td>30 min</td></tr>
                         <tr><td>9</td><td>Vérifier les sauvegardes quotidiennes Supabase (7 jours inclus sur Pro)</td><td>Supabase Dashboard</td><td>15 min</td></tr>
                         <tr><td>10</td><td>Connexion BDD des Edge Functions via Supavisor (pooling mode transaction)</td><td>Supabase Settings</td><td>15 min</td></tr>
@@ -2855,7 +2865,9 @@ REVOKE UPDATE, DELETE ON admin_audit_logs FROM authenticated;</code></pre>
                 <table>
                     <thead><tr><th>Variable</th><th>Rôle</th><th>Consommateur</th></tr></thead>
                     <tbody>
-                        <tr><td><code>SMTP_HOST / SMTP_USER / SMTP_PASS</code></td><td>Envoi OTP & Magic Links (Resend, puis SES — seules ces 3 valeurs changent)</td><td>Edge Functions</td></tr>
+                        <tr><td><code>EMAIL_PROVIDER</code></td><td>Sélecteur d'adaptateur d'envoi : <code>resend</code> (MVP) ou <code>ses</code> (scale) — la bascule tient dans cette seule variable</td><td>Edge Functions</td></tr>
+                        <tr><td><code>RESEND_API_KEY</code></td><td>Envoi OTP & Magic Links via l'API HTTP Resend (phase MVP)</td><td>Edge Functions</td></tr>
+                        <tr><td><code>SES_ACCESS_KEY / SES_SECRET_KEY / SES_REGION</code></td><td>Envoi via l'API HTTP SES v2 (signature SigV4) — provisionnées dès le jour 1, activées à la bascule</td><td>Edge Functions</td></tr>
                         <tr><td><code>TURNSTILE_SECRET_KEY</code></td><td>Vérification serveur des tokens anti-bot</td><td>Edge Functions</td></tr>
                         <tr><td><code>OTP_PEPPER</code></td><td>Secret HMAC pour hasher OTP et emails</td><td>Edge Functions</td></tr>
                         <tr><td><code>JWT_SECRET</code></td><td>Signature HMAC-SHA256 des sessions de vote</td><td>Edge Functions</td></tr>
